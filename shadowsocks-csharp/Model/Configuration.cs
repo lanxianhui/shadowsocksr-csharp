@@ -40,6 +40,7 @@ namespace Shadowsocks.Model
         BypassLan,
         BypassLanAndChina,
         BypassLanAndNotChina,
+        UserCustom = 16,
     }
 
     [Serializable]
@@ -62,6 +63,16 @@ namespace Shadowsocks.Model
         public int server_port;
     }
 
+    [Serializable]
+    public class ServerSubscribe
+    {
+        private static string DEFAULT_FEED_URL = "https://raw.githubusercontent.com/breakwa11/breakwa11.github.io/master/free/freenodeplain.txt";
+        private static string OLD_DEFAULT_FEED_URL = "https://raw.githubusercontent.com/breakwa11/breakwa11.github.io/master/free/freenode.txt";
+
+        public string URL = DEFAULT_FEED_URL;
+        public string Group;
+    }
+
     public class GlobalConfiguration
     {
         public static string config_password = "";
@@ -75,16 +86,15 @@ namespace Shadowsocks.Model
         public bool random;
         public int sysProxyMode;
         public bool shareOverLan;
-        public bool bypassWhiteList;
         public int localPort;
         public string localAuthPassword;
 
-        public string dns_server;
+        public string dnsServer;
         public int reconnectTimes;
         public int randomAlgorithm;
         public bool randomInGroup;
         public int TTL;
-        public int connect_timeout;
+        public int connectTimeout;
 
         public int proxyRuleMode;
 
@@ -106,6 +116,9 @@ namespace Shadowsocks.Model
         public int keepVisitTime;
 
         public bool isHideTips;
+
+        public bool nodeFeedAutoUpdate;
+        public List<ServerSubscribe> serverSubscribes;
 
         public Dictionary<string, string> token = new Dictionary<string, string>();
         public Dictionary<string, PortMapConfig> portMap = new Dictionary<string, PortMapConfig>();
@@ -365,10 +378,23 @@ namespace Shadowsocks.Model
         {
             index = 0;
             localPort = 1080;
+
             reconnectTimes = 2;
             keepVisitTime = 180;
-            connect_timeout = 5;
-            dns_server = "";
+            connectTimeout = 5;
+            dnsServer = "";
+
+            randomAlgorithm = (int)ServerSelectStrategy.SelectAlgorithm.LowException;
+            random = true;
+            sysProxyMode = (int)ProxyMode.Global;
+            proxyRuleMode = (int)ProxyRuleMode.BypassLanAndChina;
+
+            nodeFeedAutoUpdate = true;
+
+            serverSubscribes = new List<ServerSubscribe>()
+            {
+            };
+
             configs = new List<Server>()
             {
                 GetDefaultServer()
@@ -382,14 +408,13 @@ namespace Shadowsocks.Model
             random = config.random;
             sysProxyMode = config.sysProxyMode;
             shareOverLan = config.shareOverLan;
-            bypassWhiteList = config.bypassWhiteList;
             localPort = config.localPort;
             reconnectTimes = config.reconnectTimes;
             randomAlgorithm = config.randomAlgorithm;
             randomInGroup = config.randomInGroup;
             TTL = config.TTL;
-            connect_timeout = config.connect_timeout;
-            dns_server = config.dns_server;
+            connectTimeout = config.connectTimeout;
+            dnsServer = config.dnsServer;
             proxyEnable = config.proxyEnable;
             pacDirectGoProxy = config.pacDirectGoProxy;
             proxyType = config.proxyType;
@@ -404,6 +429,8 @@ namespace Shadowsocks.Model
             sameHostForSameTarget = config.sameHostForSameTarget;
             keepVisitTime = config.keepVisitTime;
             isHideTips = config.isHideTips;
+            nodeFeedAutoUpdate = config.nodeFeedAutoUpdate;
+            serverSubscribes = config.serverSubscribes;
         }
 
         public void FixConfiguration()
@@ -424,9 +451,9 @@ namespace Shadowsocks.Model
             {
                 token = new Dictionary<string, string>();
             }
-            if (connect_timeout == 0)
+            if (connectTimeout == 0)
             {
-                connect_timeout = 10;
+                connectTimeout = 10;
                 reconnectTimes = 2;
                 TTL = 180;
                 keepVisitTime = 180;

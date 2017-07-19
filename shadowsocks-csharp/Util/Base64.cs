@@ -7,35 +7,44 @@ namespace Shadowsocks.Util
     {
         public static string DecodeBase64(string val)
         {
-            byte[] bytes = null;
-            string data = val;
-            for (var i = 0; i < 3; i++)
-            {
-                try
-                {
-                    bytes = Convert.FromBase64String(val);
-                }
-                catch (FormatException)
-                {
-                    val += "=";
-                }
-            }
-            if (bytes != null)
-            {
-                data = Encoding.UTF8.GetString(bytes);
-            }
-            return data;
+            return Encoding.UTF8.GetString(DecodeBase64ToBytes(val));
         }
 
-        public static string EncodeUrlSafeBase64(string val)
+        public static byte[] DecodeBase64ToBytes(string val)
         {
-            return Convert.ToBase64String(Encoding.UTF8.GetBytes(val)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+            var data = val.PadRight(val.Length + (4 - val.Length % 4) % 4, '=');
+            return Convert.FromBase64String(data);
+        }
+
+        public static string EncodeUrlSafeBase64(byte[] val, bool trim)
+        {
+            if (trim)
+                return Convert.ToBase64String(val).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+            else
+                return Convert.ToBase64String(val).Replace('+', '-').Replace('/', '_');
+        }
+
+        public static byte[] DecodeUrlSafeBase64ToBytes(string val)
+        {
+            var data = val.Replace('-', '+').Replace('_', '/').PadRight(val.Length + (4 - val.Length % 4) % 4, '=');
+            return Convert.FromBase64String(data);
+        }
+
+        public static string EncodeUrlSafeBase64(string val, bool trim = true)
+        {
+            return EncodeUrlSafeBase64(Encoding.UTF8.GetBytes(val), trim);
         }
 
         public static string DecodeUrlSafeBase64(string val)
         {
-            var data = val.Replace('-', '+').Replace('_', '/').PadRight(val.Length + (4 - val.Length % 4) % 4, '=');
-            return Encoding.UTF8.GetString(Convert.FromBase64String(data));
+            return Encoding.UTF8.GetString(DecodeUrlSafeBase64ToBytes(val));
+        }
+
+        public static string DecodeStandardSSRUrlSafeBase64(string val)
+        {
+            if (val.IndexOf('=') >= 0)
+                throw new FormatException();
+            return Encoding.UTF8.GetString(DecodeUrlSafeBase64ToBytes(val));
         }
     }
 }

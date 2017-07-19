@@ -69,13 +69,17 @@ namespace Shadowsocks.Model
         public bool LoadApnic(string zone)
         {
             string filename = APNIC_EXT_FILENAME;
-            if (!File.Exists(filename))
+            string absFilePath = Path.Combine(System.Windows.Forms.Application.StartupPath, filename);
+            if (!File.Exists(absFilePath))
+            {
                 filename = APNIC_FILENAME;
-            if (File.Exists(filename))
+                absFilePath = Path.Combine(System.Windows.Forms.Application.StartupPath, filename);
+            }
+            if (File.Exists(absFilePath))
             {
                 try
                 {
-                    using (StreamReader stream = File.OpenText(filename))
+                    using (StreamReader stream = File.OpenText(absFilePath))
                     {
                         using (StreamWriter out_stream = new StreamWriter(File.OpenWrite(CHN_FILENAME))) {
                             while (true)
@@ -115,11 +119,12 @@ namespace Shadowsocks.Model
 
         public bool LoadChn()
         {
-            if (File.Exists(CHN_FILENAME))
+            string absFilePath = Path.Combine(System.Windows.Forms.Application.StartupPath, CHN_FILENAME);
+            if (File.Exists(absFilePath))
             {
                 try
                 {
-                    using (StreamReader stream = File.OpenText(CHN_FILENAME))
+                    using (StreamReader stream = File.OpenText(absFilePath))
                     {
                         while (true)
                         {
@@ -151,6 +156,10 @@ namespace Shadowsocks.Model
 
         public void Reverse()
         {
+            IPAddress addr_beg, addr_end;
+            IPAddress.TryParse("240.0.0.0", out addr_beg);
+            IPAddress.TryParse("255.255.255.255", out addr_end);
+            Insert(addr_beg, addr_end);
             for (uint i = 0; i < _set.Length; ++i)
             {
                 _set[i] = ~_set[i];

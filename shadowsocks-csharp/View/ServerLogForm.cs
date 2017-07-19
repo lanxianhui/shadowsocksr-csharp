@@ -33,6 +33,7 @@ namespace Shadowsocks.View
         private MenuItem clearItem;
         private List<int> listOrder = new List<int>();
         private int lastRefreshIndex = 0;
+        private bool firstDispley = true;
         private bool rowChange = false;
         private int updatePause = 0;
         private int updateTick = 0;
@@ -90,7 +91,7 @@ namespace Shadowsocks.View
                     CreateMenuItem("Clear &Selected Total", new EventHandler(this.ClearSelectedTotal_Click)),
                     CreateMenuItem("Clear &Total", new EventHandler(this.ClearTotal_Click)),
                 }),
-                CreateMenuGroup("C&opy", new MenuItem[] {
+                CreateMenuGroup("Port &out", new MenuItem[] {
                     CreateMenuItem("Copy current link", new EventHandler(this.copyLinkItem_Click)),
                     CreateMenuItem("Copy current group links", new EventHandler(this.copyGroupLinkItem_Click)),
                     CreateMenuItem("Copy all enable links", new EventHandler(this.copyEnableLinksItem_Click)),
@@ -312,13 +313,16 @@ namespace Shadowsocks.View
                     }
                 }
             }
+            int displayBeginIndex = ServerDataGrid.FirstDisplayedScrollingRowIndex;
+            int displayEndIndex = displayBeginIndex + ServerDataGrid.DisplayedRowCount(true);
             try
             {
                 for (int list_index = (lastRefreshIndex >= ServerDataGrid.RowCount) ? 0 : lastRefreshIndex, rowChangeCnt = 0;
-                    list_index < ServerDataGrid.RowCount && rowChangeCnt <= 200;
-                    ++list_index, ++rowChangeCnt)
+                    list_index < ServerDataGrid.RowCount && rowChangeCnt <= 100;
+                    ++list_index)
                 {
                     lastRefreshIndex = list_index + 1;
+
                     DataGridViewCell id_cell = ServerDataGrid[0, list_index];
                     int id = (int)id_cell.Value;
                     Server server = config.configs[id];
@@ -327,6 +331,10 @@ namespace Shadowsocks.View
                     rowChange = false;
                     for (int curcol = 0; curcol < ServerDataGrid.Columns.Count; ++curcol)
                     {
+                        if (!firstDispley
+                            && (ServerDataGrid.SortedColumn == null || ServerDataGrid.SortedColumn.Index != curcol)
+                            && (list_index < displayBeginIndex || list_index >= displayEndIndex))
+                            continue;
                         DataGridViewCell cell = ServerDataGrid[curcol, list_index];
                         string columnName = ServerDataGrid.Columns[curcol].Name;
                         // Server
@@ -385,7 +393,7 @@ namespace Shadowsocks.View
                         else if (columnName == "AvgLatency")
                         {
                             if (serverSpeedLog.avgConnectTime >= 0)
-                                SetCellText(cell, serverSpeedLog.avgConnectTime);
+                                SetCellText(cell, serverSpeedLog.avgConnectTime / 1000);
                             else
                                 SetCellText(cell, "-");
                         }
@@ -544,7 +552,13 @@ namespace Shadowsocks.View
                             else if (cell.Tag != null)
                             {
                                 cell.Tag = (int)cell.Tag - 1;
-                                if ((int)cell.Tag == 0) SetBackColor(cell, Color.FromArgb(0xf0, 0xf0, 0xff));
+                                if ((int)cell.Tag == 0)
+                                {
+                                    if (fullVal == "0")
+                                        SetBackColor(cell, Color.FromArgb(0xff, 0x80, 0x80));
+                                    else
+                                        SetBackColor(cell, Color.FromArgb(0xf0, 0xf0, 0xff));
+                                }
                                 //Color col = cell.Style.BackColor;
                                 //SetBackColor(cell, Color.FromArgb(Math.Min(255, col.R + colAdd), Math.Min(255, col.G + colAdd), Math.Min(255, col.B + colAdd)));
                             }
@@ -599,18 +613,8 @@ namespace Shadowsocks.View
                                 SetCellText(cell, "-");
                             }
                         }
-                        if (columnName == "Server")
-                        {
-                            if (cell.Style.Alignment != DataGridViewContentAlignment.MiddleLeft)
-                                cell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
-                        }
-                        else
-                        {
-                            if (cell.Style.Alignment != DataGridViewContentAlignment.MiddleRight)
-                                cell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
-                        }
                     }
-                    if (rowChange)
+                    if (rowChange && list_index >= displayBeginIndex && list_index < displayEndIndex)
                         rowChangeCnt++;
                 }
             }
@@ -626,6 +630,11 @@ namespace Shadowsocks.View
             if (last_rowcount == 0 && config.index >= 0 && config.index < ServerDataGrid.RowCount)
             {
                 ServerDataGrid[0, config.index].Selected = true;
+            }
+            if (firstDispley)
+            {
+                ServerDataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, config.index - ServerDataGrid.DisplayedRowCount(true) / 2);
+                firstDispley = false;
             }
         }
 
@@ -1000,6 +1009,7 @@ namespace Shadowsocks.View
         private long Str2Long(String str)
         {
             if (str == "-") return -1;
+            //if (String.IsNullOrEmpty(str)) return -1;
             if (str.LastIndexOf('K') > 0)
             {
                 Double ret = Convert.ToDouble(str.Substring(0, str.LastIndexOf('K')));

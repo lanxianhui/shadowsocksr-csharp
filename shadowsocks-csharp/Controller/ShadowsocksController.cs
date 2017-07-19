@@ -112,17 +112,7 @@ namespace Shadowsocks.Controller
         {
             for (int i = 0; i < servers.Count; ++i)
             {
-                if (servers[i].server == server.server
-                    && servers[i].server_port == server.server_port
-                    && servers[i].server_udp_port == server.server_udp_port
-                    && servers[i].method == server.method
-                    && servers[i].protocol == server.protocol
-                    && servers[i].protocolparam == server.protocolparam
-                    && servers[i].obfs == server.obfs
-                    && servers[i].obfsparam == server.obfsparam
-                    && servers[i].password == server.password
-                    && servers[i].udp_over_tcp == server.udp_over_tcp
-                    )
+                if (server.isMatchServer(servers[i]))
                 {
                     return i;
                 }
@@ -154,7 +144,9 @@ namespace Shadowsocks.Controller
                     int i = FindFirstMatchServer(servers[j], mergeConfig.configs);
                     if (i != -1)
                     {
+                        bool enable = servers[j].enable;
                         servers[j].CopyServer(mergeConfig.configs[i]);
+                        servers[j].enable = enable;
                     }
                 }
             }
@@ -214,17 +206,24 @@ namespace Shadowsocks.Controller
             _config.FlushPortMapCache();
         }
 
-        public bool AddServerBySSURL(string ssURL)
+        public bool AddServerBySSURL(string ssURL, string force_group = null, bool toLast = false)
         {
             if (ssURL.StartsWith("ss://", StringComparison.OrdinalIgnoreCase) || ssURL.StartsWith("ssr://", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
-                    var server = new Server(ssURL);
-                    int index = _config.index + 1;
-                    if (index < 0 || index > _config.configs.Count)
-                        index = _config.configs.Count;
-                    _config.configs.Insert(index, server);
+                    var server = new Server(ssURL, force_group);
+                    if (toLast)
+                    {
+                        _config.configs.Add(server);
+                    }
+                    else
+                    {
+                        int index = _config.index + 1;
+                        if (index < 0 || index > _config.configs.Count)
+                            index = _config.configs.Count;
+                        _config.configs.Insert(index, server);
+                    }
                     SaveConfig(_config);
                     return true;
                 }
@@ -258,12 +257,6 @@ namespace Shadowsocks.Controller
             {
                 ToggleRuleModeChanged(this, new EventArgs());
             }
-        }
-
-        public void ToggleBypass(bool bypass)
-        {
-            _config.bypassWhiteList = bypass;
-            SaveConfig(_config);
         }
 
         public void ToggleSelectRandom(bool enabled)
@@ -366,14 +359,6 @@ namespace Shadowsocks.Controller
             }
         }
 
-        public void UpdateBypassListFromDefault()
-        {
-            if (gfwListUpdater != null)
-            {
-                gfwListUpdater.UpdateBypassListFromDefault(_config);
-            }
-        }
-
         protected void Reload()
         {
             if (_port_map_listener != null)
@@ -388,6 +373,10 @@ namespace Shadowsocks.Controller
             _config = MergeGetConfiguration(_config);
             _config.FlushPortMapCache();
             ReloadIPRange();
+
+            HostMap hostMap = new HostMap();
+            hostMap.LoadHostFile();
+            HostMap.Instance().Clear(hostMap);
 
 #if !_CONSOLE
             if (polipoRunner == null)

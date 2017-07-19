@@ -57,9 +57,9 @@
             this.label_info.AutoSize = true;
             this.label_info.Location = new System.Drawing.Point(24, 26);
             this.label_info.Name = "label_info";
-            this.label_info.Size = new System.Drawing.Size(358, 15);
+            this.label_info.Size = new System.Drawing.Size(350, 15);
             this.label_info.TabIndex = 2;
-            this.label_info.Text = "Parse user-config.json error, maybe require password to decrypt";
+            this.label_info.Text = "Parse gui-config.json error, maybe require password to decrypt";
             // 
             // InputPassword
             // 
@@ -72,6 +72,8 @@
             this.Font = new System.Drawing.Font("Arial", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.ImeMode = System.Windows.Forms.ImeMode.Off;
             this.KeyPreview = true;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
             this.Name = "InputPassword";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "InputPassword";

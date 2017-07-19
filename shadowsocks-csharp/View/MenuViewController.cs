@@ -14,6 +14,7 @@ using ZXing;
 using ZXing.Common;
 using ZXing.QrCode;
 using System.Threading;
+using System.Text.RegularExpressions;
 
 namespace Shadowsocks.View
 {
@@ -25,6 +26,8 @@ namespace Shadowsocks.View
 
         private ShadowsocksController controller;
         private UpdateChecker updateChecker;
+        private UpdateFreeNode updateFreeNodeChecker;
+        private UpdateSubscribeManager updateSubscribeManager;
 
         private NotifyIcon _notifyIcon;
         private ContextMenu contextMenu1;
@@ -38,18 +41,19 @@ namespace Shadowsocks.View
         private MenuItem ruleBypassLan;
         private MenuItem ruleBypassChina;
         private MenuItem ruleBypassNotChina;
+        private MenuItem ruleUser;
         private MenuItem ruleDisableBypass;
 
         private MenuItem SeperatorItem;
         private MenuItem ServersItem;
         private MenuItem SelectRandomItem;
         private MenuItem sameHostForSameTargetItem;
-        private MenuItem httpWhiteListItem;
         private MenuItem UpdateItem;
         private ConfigForm configForm;
         private SettingsForm settingsForm;
         private ServerLogForm serverLogForm;
         private PortSettingsForm portMapForm;
+        private SubscribeForm subScribeForm;
         private LogForm logForm;
         private string _urlToOpen;
         private System.Timers.Timer timerDelayCheckUpdate;
@@ -80,12 +84,17 @@ namespace Shadowsocks.View
             updateChecker = new UpdateChecker();
             updateChecker.NewVersionFound += updateChecker_NewVersionFound;
 
+            updateFreeNodeChecker = new UpdateFreeNode();
+            updateFreeNodeChecker.NewFreeNodeFound += updateFreeNodeChecker_NewFreeNodeFound;
+
+            updateSubscribeManager = new UpdateSubscribeManager();
+
             LoadCurrentConfiguration();
 
-            Configuration cfg = controller.GetConfiguration();
-            if (cfg.isDefaultConfig())
+            Configuration cfg = controller.GetCurrentConfiguration();
+            if (cfg.isDefaultConfig() || cfg.nodeFeedAutoUpdate)
             {
-                ShowConfigForm(false);
+                updateSubscribeManager.CreateTask(controller.GetCurrentConfiguration(), updateFreeNodeChecker, -1, !cfg.isDefaultConfig());
             }
 
             timerDelayCheckUpdate = new System.Timers.Timer(1000.0 * 10);
@@ -106,7 +115,7 @@ namespace Shadowsocks.View
                     timerDelayCheckUpdate.Interval = 1000.0 * 60 * 60 * 2;
                 }
             }
-            updateChecker.CheckUpdate(controller.GetConfiguration());
+            updateChecker.CheckUpdate(controller.GetCurrentConfiguration());
         }
 
         void controller_Errored(object sender, System.IO.ErrorEventArgs e)
@@ -121,7 +130,7 @@ namespace Shadowsocks.View
             {
                 dpi = (int)graphics.DpiX;
             }
-            Configuration config = controller.GetConfiguration();
+            Configuration config = controller.GetCurrentConfiguration();
             bool enabled = config.sysProxyMode != (int)ProxyMode.NoModify && config.sysProxyMode != (int)ProxyMode.Direct;
             bool global = config.sysProxyMode == (int)ProxyMode.Global;
             bool random = config.random;
@@ -226,6 +235,7 @@ namespace Shadowsocks.View
                     ruleBypassLan = CreateMenuItem("Bypass LAN", new EventHandler(this.RuleBypassLanItem_Click)),
                     ruleBypassChina = CreateMenuItem("Bypass LAN && China", new EventHandler(this.RuleBypassChinaItem_Click)),
                     ruleBypassNotChina = CreateMenuItem("Bypass LAN && not China", new EventHandler(this.RuleBypassNotChinaItem_Click)),
+                    ruleUser = CreateMenuItem("User custom", new EventHandler(this.RuleUserItem_Click)),
                     new MenuItem("-"),
                     ruleDisableBypass = CreateMenuItem("Disable bypass", new EventHandler(this.RuleBypassDisableItem_Click)),
                 }),
@@ -236,18 +246,22 @@ namespace Shadowsocks.View
                     CreateMenuItem("Import servers from file...", new EventHandler(this.Import_Click)),
                     new MenuItem("-"),
                     sameHostForSameTargetItem = CreateMenuItem("Same host for same address", new EventHandler(this.SelectSameHostForSameTargetItem_Click)),
-                    httpWhiteListItem = CreateMenuItem("Enable domain white list(http proxy only)", new EventHandler(this.HttpWhiteListItem_Click)),
                     new MenuItem("-"),
-                    CreateMenuItem("Port settings...", new EventHandler(this.ShowPortMapItem_Click)),
                     CreateMenuItem("Server statistic...", new EventHandler(this.ShowServerLogItem_Click)),
                     CreateMenuItem("Disconnect current", new EventHandler(this.DisconnectCurrent_Click)),
                 }),
+                CreateMenuGroup("Servers Subscribe", new MenuItem[] {
+                    CreateMenuItem("Subscribe setting...", new EventHandler(this.SubscribeSetting_Click)),
+                    CreateMenuItem("Update subscribe SSR node", new EventHandler(this.CheckNodeUpdate_Click)),
+                    CreateMenuItem("Update subscribe SSR node(bypass proxy)", new EventHandler(this.CheckNodeUpdateBypassProxy_Click)),
+                }),
                 SelectRandomItem = CreateMenuItem("Load balance", new EventHandler(this.SelectRandomItem_Click)),
                 CreateMenuItem("Global settings...", new EventHandler(this.Setting_Click)),
+                CreateMenuItem("Port settings...", new EventHandler(this.ShowPortMapItem_Click)),
                 UpdateItem = CreateMenuItem("Update available", new EventHandler(this.UpdateItem_Clicked)),
                 new MenuItem("-"),
                 CreateMenuItem("Scan QRCode from screen...", new EventHandler(this.ScanQRCodeItem_Click)),
-                CreateMenuItem("Copy address from clipboard...", new EventHandler(this.CopyAddress_Click)),
+                CreateMenuItem("Import SSR links from clipboard...", new EventHandler(this.CopyAddress_Click)),
                 new MenuItem("-"),
                 CreateMenuGroup("Help", new MenuItem[] {
                     CreateMenuItem("Check update", new EventHandler(this.CheckUpdate_Click)),
@@ -274,13 +288,13 @@ namespace Shadowsocks.View
 
         private void controller_ToggleModeChanged(object sender, EventArgs e)
         {
-            Configuration config = controller.GetConfiguration();
+            Configuration config = controller.GetCurrentConfiguration();
             UpdateSysProxyMode(config);
         }
 
         private void controller_ToggleRuleModeChanged(object sender, EventArgs e)
         {
-            Configuration config = controller.GetConfiguration();
+            Configuration config = controller.GetCurrentConfiguration();
             UpdateProxyRule(config);
         }
 
@@ -313,10 +327,223 @@ namespace Shadowsocks.View
                 (updater.update_type <= 1 ? I18N.GetString("PAC updated") : I18N.GetString("Domain white list list updated"))
                 : I18N.GetString("No updates found. Please report to GFWList if you have problems with it.");
             ShowBalloonTip(I18N.GetString("Shadowsocks"), result, ToolTipIcon.Info, 1000);
+        }
 
-            if (updater.update_type == 8)
+        void updateFreeNodeChecker_NewFreeNodeFound(object sender, EventArgs e)
+        {
+            int count = 0;
+            if (!String.IsNullOrEmpty(updateFreeNodeChecker.FreeNodeResult))
             {
-                controller.ToggleBypass(httpWhiteListItem.Checked);
+                List<string> urls = new List<string>();
+                updateFreeNodeChecker.FreeNodeResult = updateFreeNodeChecker.FreeNodeResult.TrimEnd('\r', '\n', ' ');
+                Configuration config = controller.GetCurrentConfiguration();
+                Server selected_server = null;
+                if (config.index >= 0 && config.index < config.configs.Count)
+                {
+                    selected_server = config.configs[config.index];
+                }
+                try
+                {
+                    updateFreeNodeChecker.FreeNodeResult = Util.Base64.DecodeBase64(updateFreeNodeChecker.FreeNodeResult);
+                }
+                catch
+                {
+                    updateFreeNodeChecker.FreeNodeResult = "";
+                }
+                int max_node_num = 0;
+
+                Match match_maxnum = Regex.Match(updateFreeNodeChecker.FreeNodeResult, "^MAX=([0-9]+)");
+                if (match_maxnum.Success)
+                {
+                    try
+                    {
+                        max_node_num = Convert.ToInt32(match_maxnum.Groups[1].Value, 10);
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                URL_Split(updateFreeNodeChecker.FreeNodeResult, ref urls);
+                for (int i = urls.Count - 1; i >= 0; --i)
+                {
+                    if (!urls[i].StartsWith("ssr"))
+                        urls.RemoveAt(i);
+                }
+                if (urls.Count > 0)
+                {
+                    bool keep_selected_server = false; // set 'false' if import all nodes
+                    if (max_node_num <= 0 || max_node_num >= urls.Count)
+                    {
+                        urls.Reverse();
+                    }
+                    else
+                    {
+                        Random r = new Random();
+                        Util.Utils.Shuffle(urls, r);
+                        urls.RemoveRange(max_node_num, urls.Count - max_node_num);
+                        if (!config.isDefaultConfig())
+                            keep_selected_server = true;
+                    }
+                    string lastGroup = null;
+                    string curGroup = null;
+                    foreach (string url in urls)
+                    {
+                        try // try get group name
+                        {
+                            Server server = new Server(url, null);
+                            if (!String.IsNullOrEmpty(server.group))
+                            {
+                                curGroup = server.group;
+                                break;
+                            }
+                        }
+                        catch
+                        { }
+                    }
+                    string subscribeURL = updateSubscribeManager.URL;
+                    if (String.IsNullOrEmpty(curGroup))
+                    {
+                        curGroup = subscribeURL;
+                    }
+                    for (int i = 0; i < config.serverSubscribes.Count; ++i)
+                    {
+                        if (subscribeURL == config.serverSubscribes[i].URL)
+                        {
+                            lastGroup = config.serverSubscribes[i].Group;
+                            config.serverSubscribes[i].Group = curGroup;
+                            break;
+                        }
+                    }
+                    if (lastGroup == null)
+                    {
+                        lastGroup = curGroup;
+                    }
+
+                    if (keep_selected_server && selected_server.group == curGroup)
+                    {
+                        bool match = false;
+                        for (int i = 0; i < urls.Count; ++i)
+                        {
+                            try
+                            {
+                                Server server = new Server(urls[i], null);
+                                if (selected_server.isMatchServer(server))
+                                {
+                                    match = true;
+                                    break;
+                                }
+                            }
+                            catch
+                            { }
+                        }
+                        if (!match)
+                        {
+                            urls.RemoveAt(0);
+                            urls.Add(selected_server.GetSSRLinkForServer());
+                        }
+                    }
+
+                    // import all, find difference
+                    {
+                        Dictionary<string, Server> old_servers = new Dictionary<string, Server>();
+                        if (!String.IsNullOrEmpty(lastGroup))
+                        {
+                            for (int i = config.configs.Count - 1; i >= 0; --i)
+                            {
+                                if (lastGroup == config.configs[i].group)
+                                {
+                                    old_servers[config.configs[i].id] = config.configs[i];
+                                }
+                            }
+                        }
+                        foreach (string url in urls)
+                        {
+                            try
+                            {
+                                Server server = new Server(url, curGroup);
+                                bool match = false;
+                                foreach (KeyValuePair<string, Server> pair in old_servers)
+                                {
+                                    if (server.isMatchServer(pair.Value))
+                                    {
+                                        match = true;
+                                        old_servers.Remove(pair.Key);
+                                        pair.Value.CopyServerInfo(server);
+                                        ++count;
+                                        break;
+                                    }
+                                }
+                                if (!match)
+                                {
+                                    config.configs.Add(server);
+                                    ++count;
+                                }
+                            }
+                            catch
+                            { }
+                        }
+                        foreach (KeyValuePair<string, Server> pair in old_servers)
+                        {
+                            for (int i = config.configs.Count - 1; i >= 0; --i)
+                            {
+                                if (config.configs[i].id == pair.Key)
+                                {
+                                    config.configs.RemoveAt(i);
+                                    break;
+                                }
+                            }
+                        }
+                        controller.SaveServersConfig(config);
+                    }
+                    config = controller.GetCurrentConfiguration();
+                    if (selected_server != null)
+                    {
+                        bool match = false;
+                        for (int i = config.configs.Count - 1; i >= 0; --i)
+                        {
+                            if (config.configs[i].id == selected_server.id)
+                            {
+                                config.index = i;
+                                match = true;
+                                break;
+                            }
+                            else if (config.configs[i].group == selected_server.group)
+                            {
+                                if (config.configs[i].isMatchServer(selected_server))
+                                {
+                                    config.index = i;
+                                    match = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!match)
+                        {
+                            config.index = config.configs.Count - 1;
+                        }
+                    }
+                    else
+                    {
+                        config.index = config.configs.Count - 1;
+                    }
+                    controller.SaveServersConfig(config);
+
+                }
+            }
+            if (count > 0)
+            {
+                ShowBalloonTip(I18N.GetString("Success"),
+                    I18N.GetString("Update subscribe SSR node success"), ToolTipIcon.Info, 10000);
+            }
+            else
+            {
+                ShowBalloonTip(I18N.GetString("Error"),
+                    I18N.GetString("Update subscribe SSR node failure"), ToolTipIcon.Info, 10000);
+            }
+            if (updateSubscribeManager.Next())
+            {
+
             }
         }
 
@@ -368,11 +595,12 @@ namespace Shadowsocks.View
             ruleBypassLan.Checked = config.proxyRuleMode == (int)ProxyRuleMode.BypassLan;
             ruleBypassChina.Checked = config.proxyRuleMode == (int)ProxyRuleMode.BypassLanAndChina;
             ruleBypassNotChina.Checked = config.proxyRuleMode == (int)ProxyRuleMode.BypassLanAndNotChina;
+            ruleUser.Checked = config.proxyRuleMode == (int)ProxyRuleMode.UserCustom;
         }
 
         private void LoadCurrentConfiguration()
         {
-            Configuration config = controller.GetConfiguration();
+            Configuration config = controller.GetCurrentConfiguration();
             UpdateServersMenu();
             UpdateSysProxyMode(config);
 
@@ -380,7 +608,6 @@ namespace Shadowsocks.View
 
             SelectRandomItem.Checked = config.random;
             sameHostForSameTargetItem.Checked = config.sameHostForSameTarget;
-            httpWhiteListItem.Checked = config.bypassWhiteList;
         }
 
         private void UpdateServersMenu()
@@ -391,7 +618,7 @@ namespace Shadowsocks.View
                 items.RemoveAt(0);
             }
 
-            Configuration configuration = controller.GetConfiguration();
+            Configuration configuration = controller.GetCurrentConfiguration();
             SortedDictionary<string, MenuItem> group = new SortedDictionary<string, MenuItem>();
             const string def_group = "!(no group)";
             string select_group = "";
@@ -451,7 +678,7 @@ namespace Shadowsocks.View
                 configForm.Activate();
                 if (addNode)
                 {
-                    Configuration cfg = controller.GetConfiguration();
+                    Configuration cfg = controller.GetCurrentConfiguration();
                     configForm.SetServerListSelectedIndex(cfg.index + 1);
                 }
             }
@@ -560,6 +787,27 @@ namespace Shadowsocks.View
             }
         }
 
+        private void ShowSubscribeSettingForm()
+        {
+            if (subScribeForm != null)
+            {
+                subScribeForm.Activate();
+                subScribeForm.Update();
+                if (subScribeForm.WindowState == FormWindowState.Minimized)
+                {
+                    subScribeForm.WindowState = FormWindowState.Normal;
+                }
+            }
+            else
+            {
+                subScribeForm = new SubscribeForm(controller);
+                subScribeForm.Show();
+                subScribeForm.Activate();
+                subScribeForm.BringToFront();
+                subScribeForm.FormClosed += subScribeForm_FormClosed;
+            }
+        }
+
         void configForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             configForm = null;
@@ -575,17 +823,24 @@ namespace Shadowsocks.View
         void serverLogForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             serverLogForm = null;
+            Util.Utils.ReleaseMemory();
         }
 
         void portMapForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             portMapForm = null;
+            Util.Utils.ReleaseMemory();
         }
 
         void globalLogForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             logForm = null;
             Util.Utils.ReleaseMemory();
+        }
+
+        void subScribeForm_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            subScribeForm = null;
         }
 
         private void Config_Click(object sender, EventArgs e)
@@ -730,22 +985,27 @@ namespace Shadowsocks.View
 
         private void RuleBypassLanItem_Click(object sender, EventArgs e)
         {
-            controller.ToggleRuleMode(1);
+            controller.ToggleRuleMode((int)ProxyRuleMode.BypassLan);
         }
 
         private void RuleBypassChinaItem_Click(object sender, EventArgs e)
         {
-            controller.ToggleRuleMode(2);
+            controller.ToggleRuleMode((int)ProxyRuleMode.BypassLanAndChina);
         }
 
         private void RuleBypassNotChinaItem_Click(object sender, EventArgs e)
         {
-            controller.ToggleRuleMode(3);
+            controller.ToggleRuleMode((int)ProxyRuleMode.BypassLanAndNotChina);
+        }
+
+        private void RuleUserItem_Click(object sender, EventArgs e)
+        {
+            controller.ToggleRuleMode((int)ProxyRuleMode.UserCustom);
         }
 
         private void RuleBypassDisableItem_Click(object sender, EventArgs e)
         {
-            controller.ToggleRuleMode(0);
+            controller.ToggleRuleMode((int)ProxyRuleMode.Disable);
         }
 
         private void SelectRandomItem_Click(object sender, EventArgs e)
@@ -758,21 +1018,6 @@ namespace Shadowsocks.View
         {
             sameHostForSameTargetItem.Checked = !sameHostForSameTargetItem.Checked;
             controller.ToggleSameHostForSameTargetRandom(sameHostForSameTargetItem.Checked);
-        }
-
-        private void HttpWhiteListItem_Click(object sender, EventArgs e)
-        {
-            httpWhiteListItem.Checked = !httpWhiteListItem.Checked;
-            if (httpWhiteListItem.Checked)
-            {
-                string bypass_path = Path.Combine(System.Windows.Forms.Application.StartupPath, PACServer.BYPASS_FILE);
-                if (!File.Exists(bypass_path))
-                {
-                    controller.UpdateBypassListFromDefault();
-                    return;
-                }
-            }
-            controller.ToggleBypass(httpWhiteListItem.Checked);
         }
 
         private void CopyPACURLItem_Click(object sender, EventArgs e)
@@ -836,6 +1081,16 @@ namespace Shadowsocks.View
             updateChecker.CheckUpdate(controller.GetCurrentConfiguration());
         }
 
+        private void CheckNodeUpdate_Click(object sender, EventArgs e)
+        {
+            updateSubscribeManager.CreateTask(controller.GetCurrentConfiguration(), updateFreeNodeChecker, -1, true);
+        }
+
+        private void CheckNodeUpdateBypassProxy_Click(object sender, EventArgs e)
+        {
+            updateSubscribeManager.CreateTask(controller.GetCurrentConfiguration(), updateFreeNodeChecker, -1, false);
+        }
+
         private void ShowLogItem_Click(object sender, EventArgs e)
         {
             ShowGlobalLogForm();
@@ -851,6 +1106,11 @@ namespace Shadowsocks.View
             ShowServerLogForm();
         }
 
+        private void SubscribeSetting_Click(object sender, EventArgs e)
+        {
+            ShowSubscribeSettingForm();
+        }
+
         private void DisconnectCurrent_Click(object sender, EventArgs e)
         {
             Configuration config = controller.GetCurrentConfiguration();
@@ -863,6 +1123,10 @@ namespace Shadowsocks.View
 
         private void URL_Split(string text, ref List<string> out_urls)
         {
+            if (String.IsNullOrEmpty(text))
+            {
+                return;
+            }
             int ss_index = text.IndexOf("ss://", 1, StringComparison.OrdinalIgnoreCase);
             int ssr_index = text.IndexOf("ssr://", 1, StringComparison.OrdinalIgnoreCase);
             int index = ss_index;

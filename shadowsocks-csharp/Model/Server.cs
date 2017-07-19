@@ -136,6 +136,12 @@ namespace Shadowsocks.Model
             enable = Server.enable;
         }
 
+        public void CopyServerInfo(Server Server)
+        {
+            remarks = Server.remarks;
+            group = Server.group;
+        }
+
         public static Server GetForwardServerRef()
         {
             return forwardServer;
@@ -299,7 +305,7 @@ namespace Shadowsocks.Model
 
         public Server()
         {
-            server = "server ip or url";
+            server = "server host";
             server_port = 8388;
             method = "aes-256-cfb";
             protocol = "origin";
@@ -308,7 +314,7 @@ namespace Shadowsocks.Model
             obfsparam = "";
             password = "0";
             remarks_base64 = "";
-            group = "";
+            group = "FreeSSR-public";
             udp_over_tcp = false;
             enable = true;
             byte[] id = new byte[16];
@@ -316,20 +322,37 @@ namespace Shadowsocks.Model
             this.id = BitConverter.ToString(id).Replace("-", "");
         }
 
-        public Server(string ssURL) : this()
+        public Server(string ssURL, string force_group) : this()
         {
             if (ssURL.StartsWith("ss://", StringComparison.OrdinalIgnoreCase))
             {
-                ServerFromSS(ssURL);
+                ServerFromSS(ssURL, force_group);
             }
             else if (ssURL.StartsWith("ssr://", StringComparison.OrdinalIgnoreCase))
             {
-                ServerFromSSR(ssURL);
+                ServerFromSSR(ssURL, force_group);
             }
             else
             {
                 throw new FormatException();
             }
+        }
+
+        public bool isMatchServer(Server server)
+        {
+            if (this.server == server.server
+                && server_port == server.server_port
+                && server_udp_port == server.server_udp_port
+                && method == server.method
+                && protocol == server.protocol
+                && protocolparam == server.protocolparam
+                && obfs == server.obfs
+                && obfsparam == server.obfsparam
+                && password == server.password
+                && udp_over_tcp == server.udp_over_tcp
+                )
+                return true;
+            return false;
         }
 
         private Dictionary<string, string> ParseParam(string param_str)
@@ -350,7 +373,7 @@ namespace Shadowsocks.Model
             return params_dict;
         }
 
-        public void ServerFromSSR(string ssrURL)
+        public void ServerFromSSR(string ssrURL, string force_group)
         {
             // ssr://host:port:protocol:method:obfs:base64pass/?obfsparam=base64&remarks=base64&group=base64&udpport=0&uot=1
             Match ssr = Regex.Match(ssrURL, "ssr://([A-Za-z0-9_-]+)", RegexOptions.IgnoreCase);
@@ -378,10 +401,11 @@ namespace Shadowsocks.Model
                 match = UrlFinder.Match(data);
                 if (match.Success)
                     break;
-                ssr = Regex.Match(ssrURL, @"ssr://([A-Za-z0-9-_.:=?&/\[\]]+)", RegexOptions.IgnoreCase);
-                if (ssr.Success)
-                    data = ssr.Groups[1].Value;
-                else
+                // try match which not encode to base64
+                //ssr = Regex.Match(ssrURL, @"ssr://([A-Za-z0-9-_.:=?&/\[\]]+)", RegexOptions.IgnoreCase);
+                //if (ssr.Success)
+                //    data = ssr.Groups[1].Value;
+                //else
                     throw new FormatException();
             }
             if (match == null || !match.Success)
@@ -394,24 +418,26 @@ namespace Shadowsocks.Model
             method = match.Groups[4].Value;
             obfs = match.Groups[5].Value.Length == 0 ? "plain" : match.Groups[5].Value;
             obfs = obfs.Replace("_compatible", "");
-            password = Util.Base64.DecodeUrlSafeBase64(match.Groups[6].Value);
+            password = Util.Base64.DecodeStandardSSRUrlSafeBase64(match.Groups[6].Value);
 
             if (params_dict.ContainsKey("protoparam"))
             {
-                protocolparam = Util.Base64.DecodeUrlSafeBase64(params_dict["protoparam"]);
+                protocolparam = Util.Base64.DecodeStandardSSRUrlSafeBase64(params_dict["protoparam"]);
             }
             if (params_dict.ContainsKey("obfsparam"))
             {
-                obfsparam = Util.Base64.DecodeUrlSafeBase64(params_dict["obfsparam"]);
+                obfsparam = Util.Base64.DecodeStandardSSRUrlSafeBase64(params_dict["obfsparam"]);
             }
             if (params_dict.ContainsKey("remarks"))
             {
-                remarks = Util.Base64.DecodeUrlSafeBase64(params_dict["remarks"]);
+                remarks = Util.Base64.DecodeStandardSSRUrlSafeBase64(params_dict["remarks"]);
             }
             if (params_dict.ContainsKey("group"))
             {
-                group = Util.Base64.DecodeUrlSafeBase64(params_dict["group"]);
+                group = Util.Base64.DecodeStandardSSRUrlSafeBase64(params_dict["group"]);
             }
+            else
+                group = "";
             if (params_dict.ContainsKey("uot"))
             {
                 udp_over_tcp = int.Parse(params_dict["uot"]) != 0;
@@ -420,9 +446,11 @@ namespace Shadowsocks.Model
             {
                 server_udp_port = int.Parse(params_dict["udpport"]);
             }
+            if (!String.IsNullOrEmpty(force_group))
+                group = force_group;
         }
 
-        public void ServerFromSS(string ssURL)
+        public void ServerFromSS(string ssURL, string force_group)
         {
             Regex UrlFinder = new Regex("^(?i)ss://([A-Za-z0-9+-/=_]+)(#(.+))?", RegexOptions.IgnoreCase),
                 DetailsParser = new Regex("^((?<method>.+):(?<password>.*)@(?<hostname>.+?)" +
@@ -440,6 +468,10 @@ namespace Shadowsocks.Model
             password = match.Groups["password"].Value;
             server = match.Groups["hostname"].Value;
             server_port = int.Parse(match.Groups["port"].Value);
+            if (!String.IsNullOrEmpty(force_group))
+                group = force_group;
+            else
+                group = "";
         }
 
         public string GetSSLinkForServer()
